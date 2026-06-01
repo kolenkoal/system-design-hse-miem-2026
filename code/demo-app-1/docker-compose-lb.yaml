@@ -1,0 +1,126 @@
+version: '3.8'
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+    command: postgres -c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all -c max_connections=200
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db
+  
+  backend-2:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+    ports:
+      - "8082:8081"
+    depends_on:
+      - db
+
+  backend-3:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+    ports:
+      - "8083:8081"
+    depends_on:
+      - db
+
+  haproxy:
+    image: haproxy:latest
+    ports:
+      - "8080:80"
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - backend
+      - backend-2
+      - backend-3
+
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    environment:
+      DATA_SOURCE_NAME: "postgresql://demo:demo@db:5432/demo?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - db
+
+  node_exporter:
+    image: prom/node-exporter
+    ports:
+      - "9100:9100"
+  
+  k6:
+    image: grafana/k6:latest
+    volumes:
+      - ./k6/scripts:/scripts
+    command: run --out experimental-prometheus-rw /scripts/load-script.js
+    ports:
+      - "6565:6565"
+    environment:
+      - K6_PROMETHEUS_RW_SERVER_URL=http://localhost:9090/api/v1/write
+      - K6_PROMETHEUS_RW_TREND_STATS=p(95),p(99),min,max
+    network_mode: host
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle' # Allows config reloads without restart
+      - '--web.enable-remote-write-receiver' # Enables remote write endpoint for k6
+    depends_on:
+      - backend
+      - postgres_exporter
+      - node_exporter
+  
+  grafana:
+    image: grafana/grafana:9.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    ports:
+      - "8088:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+
+volumes:
+  db_data:
+  prometheus_data:
+  grafana_data:

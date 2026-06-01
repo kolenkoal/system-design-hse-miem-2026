@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'p1'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['patroni1:8008']
+
+  - job_name: 'p2'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['patroni2:8008'] 
+
+  - job_name: 'p3'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['patroni3:8008']
+
+  - job_name: 'postgres'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['postgres_exporter:9187']

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Highload demo UI</title>
+</head>
+<body>
+  <h1>Highload demo</h1>
+  <div>
+    <h2>Create user</h2>
+    <input id="name" placeholder="name" />
+    <input id="email" placeholder="email" />
+    <button onclick="createUser()">Create</button>
+  </div>
+  <div>
+    <h2>Create order (for user id)</h2>
+    <input id="uid" placeholder="user id" />
+    <input id="amount" placeholder="amount" />
+    <input id="desc" placeholder="description" />
+    <button onclick="createOrder()">Create</button>
+  </div>
+  <script>
+    async function createUser(){
+      const name = document.getElementById('name').value
+      const email = document.getElementById('email').value
+      const res = await fetch('/api/users', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, email})})
+      alert(await res.text())
+    }
+    async function createOrder(){
+      const user_id = parseInt(document.getElementById('uid').value)
+      const amount = parseFloat(document.getElementById('amount').value)
+      const description = document.getElementById('desc').value
+      const res = await fetch('/api/orders', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_id, amount, description})})
+      alert(await res.text())
+    }
+  </script>
+</body>
+</html>
