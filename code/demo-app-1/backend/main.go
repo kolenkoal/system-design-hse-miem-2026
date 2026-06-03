@@ -40,10 +40,43 @@ var (
             Buckets: prometheus.DefBuckets,
         },
     )
+
+    // ★ Метрики connection pool — показывают насыщение пула соединений к postgres
+    dbPoolOpen = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "db_pool_open_connections",
+        Help: "Current number of open DB connections (in-use + idle)",
+    })
+    dbPoolInUse = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "db_pool_in_use_connections",
+        Help: "DB connections currently executing a query",
+    })
+    dbPoolIdle = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "db_pool_idle_connections",
+        Help: "DB connections sitting idle in the pool",
+    })
+    // WaitCount растёт когда все соединения заняты и запрос ждёт — прямой индикатор исчерпания пула
+    dbPoolWaitTotal = prometheus.NewCounter(prometheus.CounterOpts{
+        Name: "db_pool_wait_total",
+        Help: "Total number of times a request waited for a DB connection",
+    })
+    dbPoolWaitDuration = prometheus.NewCounter(prometheus.CounterOpts{
+        Name: "db_pool_wait_duration_seconds_total",
+        Help: "Total time spent waiting for a DB connection",
+    })
+
+    // ★ In-flight requests — сколько HTTP-запросов обрабатывается прямо сейчас
+    httpInFlight = prometheus.NewGauge(prometheus.GaugeOpts{
+        Name: "http_requests_in_flight",
+        Help: "Number of HTTP requests currently being processed",
+    })
 )
 
 func init() {
-    prometheus.MustRegister(requestDuration, requestCount, dbQueryDuration)
+    prometheus.MustRegister(
+        requestDuration, requestCount, dbQueryDuration,
+        dbPoolOpen, dbPoolInUse, dbPoolIdle, dbPoolWaitTotal, dbPoolWaitDuration,
+        httpInFlight,
+    )
 }
 
 type Server struct {
@@ -69,6 +102,26 @@ func main() {
     }
 
     s := &Server{db: db}
+
+    // ★ Горутина обновляет метрики pool каждые 2 сек — дёшево и достаточно точно
+    go func() {
+        var prevWaitCount int64
+        var prevWaitDur time.Duration
+        for range time.Tick(2 * time.Second) {
+            st := db.Stats()
+            dbPoolOpen.Set(float64(st.OpenConnections))
+            dbPoolInUse.Set(float64(st.InUse))
+            dbPoolIdle.Set(float64(st.Idle))
+            if delta := st.WaitCount - prevWaitCount; delta > 0 {
+                dbPoolWaitTotal.Add(float64(delta))
+                prevWaitCount = st.WaitCount
+            }
+            if delta := st.WaitDuration - prevWaitDur; delta > 0 {
+                dbPoolWaitDuration.Add(delta.Seconds())
+                prevWaitDur = st.WaitDuration
+            }
+        }
+    }()
 
     r := mux.NewRouter()
     api := r.PathPrefix("/api").Subrouter()
@@ -96,6 +149,9 @@ func main() {
 
 func instrumentHandler(h http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        httpInFlight.Inc()
+        defer httpInFlight.Dec()
+
         start := time.Now()
         rw := &statusRecorder{ResponseWriter: w, status: 200}
         h.ServeHTTP(rw, r)
